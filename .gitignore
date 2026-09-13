@@ -1,0 +1,11 @@
+# 依赖
+node_modules/
+
+# 原始模型源文件（大体积，未在展示中直接使用）
+*.c4d
+*.fbx
+*.stl
+*.skp
+*.max
+*.mb
+*.bmp

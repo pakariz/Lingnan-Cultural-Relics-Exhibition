@@ -1,0 +1,15 @@
+{
+  "name": "lingnan-heritage-exhibition",
+  "version": "1.0.0",
+  "private": true,
+  "description": "3D artifact exhibition with auto-scanned models and CRUD backend",
+  "main": "backend/server.js",
+  "scripts": {
+    "start": "node backend/server.js",
+    "dev": "node --watch backend/server.js"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "multer": "^2.1.1"
+  }
+}
