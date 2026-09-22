@@ -43,6 +43,24 @@ const upload = multer({
   },
 });
 
+// 2D 图片生成 3D：只用内存缓存接收单张图片，不落盘
+const imageExtensions = new Set([".jpg", ".jpeg", ".png", ".webp", ".bmp"]);
+const uploadImage = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 12 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (!imageExtensions.has(ext)) {
+      cb(new Error("仅支持 .jpg、.png、.webp、.bmp 图片文件"));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+// 本机 2D->3D 推理服务（ai3d/server.py）
+const AI3D_URL = process.env.AI3D_URL || "http://127.0.0.1:8765";
+
 function readArtifacts() {
   try {
     return JSON.parse(fs.readFileSync(dataFile, "utf8"));
@@ -345,6 +363,70 @@ app.delete("/api/artifacts/:id", (req, res) => {
   deleteModelFile(artifact.modelFile);
   writeArtifacts(artifacts.filter((item) => item.id !== req.params.id));
   res.json({ success: true });
+});
+
+// 2D 图片 -> 3D 模型：转发给本机 ai3d/server.py，成功后登记到展品列表
+app.post("/api/generate-3d", uploadImage.single("image"), async (req, res) => {
+  const baseName = (req.body.name || "").trim() || (req.file?.originalname || "").replace(/\.(jpe?g|png|webp|bmp)$/i, "") || "AI生成文物";
+
+  try {
+    let health;
+    try {
+      health = await fetch(`${AI3D_URL}/health`, { signal: AbortSignal.timeout(3000) });
+    } catch (_e) {
+      res.status(503).json({
+        message:
+          "2D->3D 推理服务未启动。请在项目根目录运行 `ai3d\\启动推理服务.bat`（或手动 `python ai3d/server.py`），等待模型加载完成后再试。",
+      });
+      return;
+    }
+    if (!health.ok) {
+      res.status(503).json({ message: "2D->3D 推理服务暂不可用，请稍后重试。" });
+      return;
+    }
+
+    const base64 = Buffer.from(req.file.buffer).toString("base64");
+    const genRes = await fetch(`${AI3D_URL}/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        image: base64,
+        num_inference_steps: Number(req.body.numInferenceSteps) || 30,
+        octree_resolution: Number(req.body.octreeResolution) || 256,
+        with_texture: req.body.withTexture === "true",
+      }),
+      signal: AbortSignal.timeout(900000), // 推理较慢，最多等 15 分钟
+    });
+
+    const genJson = await genRes.json().catch(() => null);
+    if (!genRes.ok || !genJson?.modelFile) {
+      res.status(genRes.status || 500).json({
+        message: `2D->3D 生成失败：${genJson?.detail || genJson?.message || "未知错误"}`,
+      });
+      return;
+    }
+
+    // glb 已由 ai3d 服务直接写入 models/，这里只登记展品
+    const existing = { name: baseName };
+    const artifact = createDefaultArtifactFromModel(genJson.modelFile, existing);
+    artifact.name = baseName;
+    artifact.source = "ai-generated";
+    artifact.createdAt = new Date().toISOString();
+    artifact.updatedAt = new Date().toISOString();
+
+    const artifacts = mergeArtifactsWithModels().map(({ modelUrl, ...a }) => a);
+    artifacts.push({
+      ...artifact,
+      modelFile: genJson.modelFile,
+    });
+    writeArtifacts(artifacts);
+    res.status(201).json({
+      success: true,
+      artifact: mergeArtifactsWithModels().find((item) => item.id === artifact.id),
+    });
+  } catch (error) {
+    res.status(500).json({ message: `2D->3D 接口错误：${error.message}` });
+  }
 });
 
 app.use("/models", express.static(modelsDir));

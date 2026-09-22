@@ -1,0 +1,24 @@
+# 2D->3D 推理服务 (ai3d/server.py) 依赖清单
+# 说明：torch/torchvision 需用 CUDA 版，请勿从本清单安装 CPU 版。
+# 安装:CUDA torch 后执行  venv\Scripts\python -m pip install -r requirements_a3d.txt
+ninja
+pybind11
+diffusers
+einops
+opencv-python
+numpy
+transformers
+torchvision
+omegaconf
+tqdm
+trimesh
+plyfile
+pymeshlab
+pygltflib
+xatlas
+accelerate
+fastapi
+uvicorn
+python-multipart
+rembg
+onnxruntime

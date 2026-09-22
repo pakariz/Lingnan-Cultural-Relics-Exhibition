@@ -431,6 +431,8 @@
                     <path d="M3 4v6h6"/>
                 </svg>
             </button>
+            <button type="button" class="btn btn-toolbar-light" id="gen3d-btn" title="用一张文物图片 AI 生成 3D 模型">图片生成3D</button>
+            <input type="file" id="gen3d-file" accept=".jpg,.jpeg,.png,.webp,.bmp" hidden>
             <button type="button" class="btn btn-toolbar-light" id="toggle-edit-btn">编辑模式</button>
         </div>
     </div>
@@ -958,6 +960,39 @@
 
     document.getElementById("refresh-btn").addEventListener("click", () => {
         loadArtifacts();
+    });
+
+    // 2D 图片 -> 3D 生成
+    const gen3dBtn = document.getElementById("gen3d-btn");
+    const gen3dFile = document.getElementById("gen3d-file");
+    gen3dBtn.addEventListener("click", () => gen3dFile.click());
+    gen3dFile.addEventListener("change", async () => {
+        const file = gen3dFile.files && gen3dFile.files[0];
+        gen3dFile.value = "";
+        if (!file) return;
+        const oldText = gen3dBtn.innerText;
+        gen3dBtn.disabled = true;
+        gen3dBtn.innerText = "生成中...";
+        const status = document.getElementById("model-status");
+        try {
+            const payload = new FormData();
+            payload.append("image", file);
+            payload.append("name", file.name.replace(/\.(jpe?g|png|webp|bmp)$/i, ""));
+            status.innerText = "AI 生成 3D 中，首次运行需下载模型，请耐心等待...";
+            const res = await fetch("/api/generate-3d", { method: "POST", body: payload });
+            const json = await res.json().catch(() => null);
+            if (!res.ok) {
+                throw new Error((json && (json.message || json.detail)) || `生成失败(${res.status})`);
+            }
+            status.innerText = "生成成功，正在载入...";
+            await loadArtifacts(true, json?.artifact?.id);
+            status.innerText = "AI 3D 模型已生成并加入展馆";
+        } catch (e) {
+            status.innerText = `生成失败：${e.message || e}`;
+        } finally {
+            gen3dBtn.disabled = false;
+            gen3dBtn.innerText = oldText;
+        }
     });
 
     document.getElementById("new-btn").addEventListener("click", () => {
