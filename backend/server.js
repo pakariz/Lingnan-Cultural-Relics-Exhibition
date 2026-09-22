@@ -363,7 +363,10 @@ app.use((error, _req, res, _next) => {
   });
 });
 
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
+const port = Number(process.env.PORT || 3000);
+const server = app.listen(port, () => {
   console.log(`数字文物展馆已启动: http://localhost:${port}`);
 });
+
+// 供 Electron 桌面端复用：可直接加载本模块启动服务
+module.exports = { app, server, port };
