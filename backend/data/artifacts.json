@@ -23,7 +23,7 @@
     "modelFile": "1652/226.obj",
     "source": "filesystem",
     "createdAt": "2026-04-17T07:14:18.461Z",
-    "updatedAt": "2026-05-16T15:42:51.955Z"
+    "updatedAt": "2026-10-14T10:40:31.162Z"
   },
   {
     "id": "scanned-1776410395136-ypmi41",
@@ -49,7 +49,7 @@
     "modelFile": "600/OBJ文件/CuoJintongBoShanLv.obj",
     "source": "filesystem",
     "createdAt": "2026-04-17T07:19:55.136Z",
-    "updatedAt": "2026-05-16T15:42:51.955Z"
+    "updatedAt": "2026-10-14T10:40:31.162Z"
   },
   {
     "id": "scanned-1776357904426-6m0uha",
@@ -75,7 +75,7 @@
     "modelFile": "ship_in_a_bottle.glb",
     "source": "filesystem",
     "createdAt": "2026-04-16T16:45:04.426Z",
-    "updatedAt": "2026-05-16T15:42:51.955Z"
+    "updatedAt": "2026-10-14T10:40:31.162Z"
   },
   {
     "id": "demo-bronze-jue",
@@ -115,6 +115,32 @@
     "modelFile": "青铜鼎/ding.obj",
     "source": "filesystem",
     "createdAt": "2026-04-17T07:19:55.136Z",
-    "updatedAt": "2026-05-16T15:42:51.955Z"
+    "updatedAt": "2026-10-14T10:40:31.162Z"
+  },
+  {
+    "id": "scanned-1791974358747-yj55ll",
+    "name": "AI生成青铜鼎",
+    "description": "该文物已从 models 文件夹自动载入，请在右侧补充文物说明、年代、材质和尺寸信息。",
+    "era": "待补充",
+    "category": "未分类",
+    "origin": "待补充",
+    "material": "待补充",
+    "dimensions": "待补充",
+    "emissiveIntensity": 0.35,
+    "modelScale": 1,
+    "posX": 0,
+    "posY": -0.2,
+    "posZ": 0,
+    "bgColor": "#000000",
+    "envLightIntensity": 1,
+    "extraLightColor": "#ffd8b0",
+    "extraLightIntensity": 0.25,
+    "extraLightX": 0,
+    "extraLightY": 2.2,
+    "extraLightZ": 1.8,
+    "modelFile": "tmprj7gdrhe.glb",
+    "source": "ai-generated",
+    "createdAt": "2026-10-14T10:39:18.747Z",
+    "updatedAt": "2026-10-14T10:40:31.162Z"
   }
 ]

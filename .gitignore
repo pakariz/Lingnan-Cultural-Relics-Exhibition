@@ -5,6 +5,7 @@ node_modules/
 ai3d/venv/
 ai3d/torch-local/
 ai3d/Hunyuan3D-2/
+ai3d/weights/
 ai3d/**/__pycache__/
 ai3d/**/*.whl
 .venv/

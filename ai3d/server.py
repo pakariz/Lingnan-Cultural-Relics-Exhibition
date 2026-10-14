@@ -2,10 +2,10 @@
 """2D 图片 -> 3D 文物模型 的本地推理 HTTP 服务。
 
 架构：index.html 上传图片 -> Express 后端 /api/generate-3d -> 本服务 (127.0.0.1:8765)
-本服务用腾讯 Hunyuan3D-2（Apache 2.0）把单张图片重建为 .glb。
+本服务用腾讯 Hunyuan3D（代码与权重遵循 TENCENT HUNYUAN 社区许可，仅供非商业用途）把单张图片重建为 .glb。
 
-首次运行会自动下载模型权重到 ~/.cache/hy3dgen（请保证网络可访问 HuggingFace，已默认走 hf-mirror.com 镜像）。
-受限于本机 8GB 显存，默认只做几何重建（无 PBR 贴图），输出纯白/反照率网格，交给展馆前端补光呈现。
+首次运行的模型权重放在项目内 ai3d/weights（已默认走 HuggingFace 国内镜像 hf-mirror.com）。
+受限于本机 8GB 显存，默认只做几何重建（无 PBR 贴图），输出纯色网格，交给展馆前端补光呈现。
 """
 
 import os
@@ -13,6 +13,11 @@ import os
 # 权重优先从 HuggingFace 国内镜像下载，避免官方源超时
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
+# 权重目录固定在项目内 ai3d/weights，避免依赖用户级缓存目录（也便于离线搬运）
+os.environ.setdefault(
+    "HY3DGEN_MODELS",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "weights"),
+)
 
 import io
 import base64
@@ -53,17 +58,30 @@ class GenerateResponse(BaseModel):
 
 
 def _load_engine():
-    """懒加载 Hunyuan3D-2 shape 重建 pipeline。"""
+    """懒加载 Hunyuan3D shape 重建 pipeline。
+
+    默认使用 Hunyuan3D-2mini（约 0.6B DiT + 0.4B VAE，官方要求 ≥6GB 显存），
+    适配本机 8GB 显存的 RTX 4060 Laptop。若要更高精度可改为：
+        HY3D_REPO=tencent/Hunyuan3D-2  HY3D_SUBFOLDER=hunyuan3d-dit-v2-0
+    （标准版官方要求 ≥12GB 显存，8GB 卡可能 OOM）。
+    """
     global _engine
     if _engine is not None:
         return _engine
     with _engine_lock:
         if _engine is None:
+            import torch
             from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
-            # fp16 降低显存占用；8GB 卡使用默认版本即可
+            repo = os.environ.get("HY3D_REPO", "tencent/Hunyuan3D-2mini")
+            subfolder = os.environ.get("HY3D_SUBFOLDER", "hunyuan3d-dit-v2-mini")
             _engine = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
-                "tencent/Hunyuan3D-2", variant="fp16"
+                repo,
+                subfolder=subfolder,
+                variant="fp16",
+                use_safetensors=True,
+                device="cuda",
+                dtype=torch.float16,
             )
     return _engine
 

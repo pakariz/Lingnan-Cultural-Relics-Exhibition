@@ -1,14 +1,27 @@
 # 2D->3D 推理服务 (ai3d/server.py) 依赖清单
-# 说明：torch/torchvision 需用 CUDA 版，请勿从本清单安装 CPU 版。
-# 安装:CUDA torch 后执行  venv\Scripts\python -m pip install -r requirements_a3d.txt
+#
+# 重要：torch / torchvision 必须使用 CUDA 版，且二者版本要匹配（torch 2.7.1 + torchvision 0.22.1）。
+#       本清单已刻意不含 torch/torchvision，避免被解析成 CPU 版覆盖掉 CUDA 版。
+#       请先用下列命令离线安装本地 CUDA 轮子（见 ai3d/torch-local/）：
+#           venv\Scripts\python -m pip install ".\torch-local\torch-2.7.1+cu128-cp313-cp313-win_amd64.whl"
+#           venv\Scripts\python -m pip install --no-deps ".\torch-local\torchvision-0.22.1+cu128-cp313-cp313-win_amd64.whl"
+#       然后再执行本清单：
+#            venv\Scripts\python -m pip install -r requirements_a3d.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+#
+# 版本锁定说明（务必保留）：
+#   transformers==4.48.3  必须是 4.x。transformers 5.x 把 DINOv2 改写成 ViT/Llama 模块，
+#                         权重键名变成 attention.q_proj / mlp.gate_proj，
+#                         与 Hunyuan3D 官方权重（attention.attention.query / mlp.weights_in）对不上，
+#                         会在加载 conditioner 时报 "Missing key(s) in state_dict"。
+#   diffusers==0.32.2     transformers 4.x 要求 huggingface-hub<1.0，而 diffusers 0.41 要求 hub>=1.32，
+#                         两者互斥；0.32.2 可与 hub 0.36.x 共存。
 ninja
 pybind11
-diffusers
+diffusers==0.32.2
 einops
 opencv-python
 numpy
-transformers
-torchvision
+transformers==4.48.3
 omegaconf
 tqdm
 trimesh
@@ -17,8 +30,11 @@ pymeshlab
 pygltflib
 xatlas
 accelerate
+safetensors
+huggingface_hub
 fastapi
 uvicorn
 python-multipart
 rembg
 onnxruntime
+PyYAML
