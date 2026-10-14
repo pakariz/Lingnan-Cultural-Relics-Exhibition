@@ -12,6 +12,7 @@ if not exist "venv\Scripts\python.exe" (
 )
 
 echo 正在启动 2D->3D 推理服务 (127.0.0.1:8765)...
-echo 首次运行会自动下载 Hunyuan3D-2 模型权重，请耐心等待。
+echo 首次收到生成请求时会把约 4GB 权重加载进显存，通常需要 1~2 分钟。
+echo 若权重缺失，会从 hf-mirror 自动下载（也可先跑 fetch_weights.py 预下载）。
 "venv\Scripts\python.exe" server.py
 pause
