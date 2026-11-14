@@ -6,6 +6,7 @@ ai3d/venv/
 ai3d/torch-local/
 ai3d/Hunyuan3D-2/
 ai3d/weights/
+ai3d/cuda-home/
 ai3d/ai3d-service.log
 ai3d/**/__pycache__/
 ai3d/**/*.whl

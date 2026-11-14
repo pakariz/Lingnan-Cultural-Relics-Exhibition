@@ -522,6 +522,7 @@ app.post("/api/generate-3d", uploadImage.single("image"), async (req, res) => {
     res.status(201).json({
       success: true,
       artifact: mergeArtifactsWithModels().find((item) => item.id === artifact.id),
+      warning: genJson.warning || null,
     });
   } catch (error) {
     res.status(500).json({ message: `2D->3D 接口错误：${error.message}` });

@@ -19,6 +19,7 @@ from PIL import Image
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 img_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(PROJ, "models", "青铜鼎", "ding.jpg")
 api = sys.argv[2] if len(sys.argv) > 2 else "http://127.0.0.1:8765"
+with_texture = "--texture" in sys.argv
 
 with Image.open(img_path) as im:
     im = im.convert("RGB")
@@ -32,7 +33,7 @@ payload = {
     "image": base64.b64encode(buf.getvalue()).decode("ascii"),
     "num_inference_steps": 30,
     "octree_resolution": 256,
-    "with_texture": False,
+    "with_texture": with_texture,
 }
 
 print("首次请求会加载约 3.6GB 权重到显存，请耐心等待...", flush=True)
@@ -57,3 +58,5 @@ print(
     f"落盘存在={os.path.exists(glb)}",
     flush=True,
 )
+if body.get("warning"):
+    print(f"警告: {body['warning']}", flush=True)

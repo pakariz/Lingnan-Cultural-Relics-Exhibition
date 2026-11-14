@@ -1,18 +1,23 @@
 # -*- coding: utf-8 -*-
-"""Hunyuan3D-2mini 权重下载器（支持断点续传）。
+"""Hunyuan3D 权重下载器（支持断点续传）。
 
 用途：把推理所需权重拉到 server.py 期望的目录
-    ai3d/weights/tencent/Hunyuan3D-2mini/<subfolder>/
+    ai3d/weights/<repo>/<subfolder>/
 下载源：HuggingFace 国内镜像 hf-mirror.com（可用 env HF_ENDPOINT 覆盖）。
+
+包含两组：
+- shape（几何重建）：tencent/Hunyuan3D-2mini 的 dit + vae，约 4GB
+- paint（纹理上色）：tencent/Hunyuan3D-2 的 delight + paint-turbo，约 10.3GB
 
 特点：
 - HTTP Range 断点续传：中断后重跑即可从已下载字节继续，不会重头来
 - 单个文件内自动重试（默认 200 次，间隔 3 秒），可长时间无人值守
-- 先下必需的小文件 config.yaml，再下 3.6GB 的 DiT 权重，最后下可选 VAE
+- 跳过与 .safetensors 重复的 .bin（省约 3.9GB）
 
 用法：
-    ai3d\\venv\\Scripts\\python.exe ai3d\\fetch_weights.py            # 全部
-    ai3d\\venv\\Scripts\\python.exe ai3d\\fetch_weights.py dit        # 只下 DiT
+    ai3d\\venv\\Scripts\\python.exe ai3d\\fetch_weights.py           # 全部
+    ai3d\\venv\\Scripts\\python.exe ai3d\\fetch_weights.py shape     # 只下几何
+    ai3d\\venv\\Scripts\\python.exe ai3d\\fetch_weights.py paint     # 只下纹理
 """
 
 import os
@@ -22,22 +27,69 @@ import time
 import requests
 
 ENDPOINT = os.environ.get("HF_ENDPOINT", "https://hf-mirror.com").rstrip("/")
-REPO = os.environ.get("HY3D_REPO_ID", "tencent/Hunyuan3D-2mini")
-ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "weights", *REPO.split("/"))
+WEIGHTS_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "weights")
 MAX_RETRY = int(os.environ.get("HY3D_DL_RETRY", "200"))
 RETRY_DELAY = int(os.environ.get("HY3D_DL_RETRY_DELAY", "3"))
 
-# (相对路径, 分组标签)
-FILES = [
-    ("hunyuan3d-dit-v2-mini/config.yaml", "cfg"),
-    ("hunyuan3d-vae-v2-mini/config.yaml", "cfg"),
-    ("hunyuan3d-dit-v2-mini/model.fp16.safetensors", "dit"),
-    ("hunyuan3d-vae-v2-mini/model.fp16.safetensors", "vae"),
+SHAPE_REPO = "tencent/Hunyuan3D-2mini"
+PAINT_REPO = "tencent/Hunyuan3D-2"
+
+_TOKENIZER = [
+    "tokenizer/merges.txt",
+    "tokenizer/vocab.json",
+    "tokenizer/special_tokens_map.json",
+    "tokenizer/tokenizer_config.json",
 ]
 
+# (仓库, 相对路径, 分组标签)
+FILES = [
+    # ---- 几何重建（Hunyuan3D-2mini）----
+    (SHAPE_REPO, "hunyuan3d-dit-v2-mini/config.yaml", "shape"),
+    (SHAPE_REPO, "hunyuan3d-vae-v2-mini/config.yaml", "shape"),
+    (SHAPE_REPO, "hunyuan3d-dit-v2-mini/model.fp16.safetensors", "shape"),
+    (SHAPE_REPO, "hunyuan3d-vae-v2-mini/model.fp16.safetensors", "shape"),
+    # ---- 纹理上色：去光照模型 delight（InstructPix2Pix）----
+    (PAINT_REPO, "hunyuan3d-delight-v2-0/model_index.json", "paint"),
+    (PAINT_REPO, "hunyuan3d-delight-v2-0/scheduler/scheduler_config.json", "paint"),
+    (PAINT_REPO, "hunyuan3d-delight-v2-0/feature_extractor/preprocessor_config.json", "paint"),
+    (PAINT_REPO, "hunyuan3d-delight-v2-0/text_encoder/config.json", "paint"),
+    (PAINT_REPO, "hunyuan3d-delight-v2-0/text_encoder/model.safetensors", "paint"),
+    (PAINT_REPO, "hunyuan3d-delight-v2-0/unet/config.json", "paint"),
+    (PAINT_REPO, "hunyuan3d-delight-v2-0/unet/diffusion_pytorch_model.safetensors", "paint"),
+    (PAINT_REPO, "hunyuan3d-delight-v2-0/vae/config.json", "paint"),
+    (PAINT_REPO, "hunyuan3d-delight-v2-0/vae/diffusion_pytorch_model.safetensors", "paint"),
+    # ---- 纹理上色：多视角扩散模型 paint-turbo（LCM 4 步）----
+    (PAINT_REPO, "hunyuan3d-paint-v2-0-turbo/model_index.json", "paint"),
+    (PAINT_REPO, "hunyuan3d-paint-v2-0-turbo/scheduler/scheduler_config.json", "paint"),
+    (PAINT_REPO, "hunyuan3d-paint-v2-0-turbo/feature_extractor/preprocessor_config.json", "paint"),
+    (PAINT_REPO, "hunyuan3d-paint-v2-0-turbo/image_encoder/config.json", "paint"),
+    (PAINT_REPO, "hunyuan3d-paint-v2-0-turbo/image_encoder/preprocessor_config.json", "paint"),
+    (PAINT_REPO, "hunyuan3d-paint-v2-0-turbo/image_encoder/model.safetensors", "paint"),
+    (PAINT_REPO, "hunyuan3d-paint-v2-0-turbo/text_encoder/config.json", "paint"),
+    (PAINT_REPO, "hunyuan3d-paint-v2-0-turbo/text_encoder/pytorch_model.bin", "paint"),
+    (PAINT_REPO, "hunyuan3d-paint-v2-0-turbo/unet/config.json", "paint"),
+    (PAINT_REPO, "hunyuan3d-paint-v2-0-turbo/unet/modules.py", "paint"),
+    (PAINT_REPO, "hunyuan3d-paint-v2-0-turbo/unet/diffusion_pytorch_model.safetensors", "paint"),
+    (PAINT_REPO, "hunyuan3d-paint-v2-0-turbo/vae/config.json", "paint"),
+    (PAINT_REPO, "hunyuan3d-paint-v2-0-turbo/vae/diffusion_pytorch_model.bin", "paint"),
+] + [
+    (PAINT_REPO, f"hunyuan3d-delight-v2-0/{f}", "paint") for f in _TOKENIZER
+] + [
+    (PAINT_REPO, f"hunyuan3d-paint-v2-0-turbo/{f}", "paint") for f in _TOKENIZER
+]
 
-def _url(rel):
-    return f"{ENDPOINT}/{REPO}/resolve/main/{rel}"
+# 体积大且与 safetensors 内容重复的 .bin，不下（diffusers 会优先用 safetensors）
+SKIP = {
+    (PAINT_REPO, "hunyuan3d-paint-v2-0-turbo/unet/diffusion_pytorch_model.bin"),
+}
+
+
+def _url(repo, rel):
+    return f"{ENDPOINT}/{repo}/resolve/main/{rel}"
+
+
+def _dst(repo, rel):
+    return os.path.join(WEIGHTS_ROOT, *repo.split("/"), *rel.split("/"))
 
 
 def _total_size(session, url):
@@ -53,10 +105,10 @@ def _total_size(session, url):
         return None
 
 
-def download_one(session, rel, group):
-    dst = os.path.join(ROOT, *rel.split("/"))
+def download_one(session, repo, rel, group):
+    dst = _dst(repo, rel)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
-    url = _url(rel)
+    url = _url(repo, rel)
     total = _total_size(session, url)
 
     for attempt in range(1, MAX_RETRY + 1):
@@ -109,13 +161,14 @@ def download_one(session, rel, group):
 
 def main():
     only = sys.argv[1].lower() if len(sys.argv) > 1 else None
-    targets = [(rel, g) for rel, g in FILES if not only or g == only or (only == "cfg" and g == "cfg")]
-    print(f"下载源: {ENDPOINT}  仓库: {REPO}\n目标目录: {ROOT}\n", flush=True)
+    targets = [(repo, rel, g) for repo, rel, g in FILES if not only or g == only]
+    targets = [(repo, rel, g) for repo, rel, g in targets if (repo, rel) not in SKIP]
+    print(f"下载源: {ENDPOINT}\n目标目录: {WEIGHTS_ROOT}\n共 {len(targets)} 个文件\n", flush=True)
     session = requests.Session()
     session.headers.update({"User-Agent": "lingnan-exhibition-ai3d/1.0"})
     ok = True
-    for rel, group in targets:
-        ok = download_one(session, rel, group) and ok
+    for repo, rel, group in targets:
+        ok = download_one(session, repo, rel, group) and ok
     print("\n全部结束" + ("" if ok else "（存在失败项，可重跑本脚本续传）"), flush=True)
     return 0 if ok else 1
 

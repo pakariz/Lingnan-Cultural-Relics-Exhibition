@@ -148,6 +148,22 @@
             background: #e7e1d6;
         }
 
+        .gen3d-tex {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 12px;
+            color: #cfd6e4;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+
+        .gen3d-tex input {
+            accent-color: #c9a227;
+            cursor: pointer;
+        }
+
         .panel-header {
             padding: 14px 14px 10px;
             border-bottom: 1px solid var(--border);
@@ -432,6 +448,10 @@
                 </svg>
             </button>
             <button type="button" class="btn btn-toolbar-light" id="gen3d-btn" title="用一张文物图片 AI 生成 3D 模型">图片生成3D</button>
+            <label class="gen3d-tex" title="开启后额外生成 1024 贴图（每件多花几分钟）">
+                <input type="checkbox" id="gen3d-texture" checked>
+                带贴图
+            </label>
             <input type="file" id="gen3d-file" accept=".jpg,.jpeg,.png,.webp,.bmp" hidden>
             <button type="button" class="btn btn-toolbar-light" id="toggle-edit-btn">编辑模式</button>
         </div>
@@ -695,7 +715,8 @@
                         } else {
                             mat.emissive = new THREE.Color(0x8a6647);
                         }
-                        mat.emissiveIntensity = intensity;
+                        // 带贴图的模型：自发光会把纹样冲淡，直接关掉
+                        mat.emissiveIntensity = mat.map ? 0 : intensity;
                         if ("needsUpdate" in mat) mat.needsUpdate = true;
                         child.castShadow = true;
                         child.receiveShadow = true;
@@ -994,7 +1015,11 @@
             const payload = new FormData();
             payload.append("image", file);
             payload.append("name", file.name.replace(/\.(jpe?g|png|webp|bmp)$/i, ""));
-            status.innerText = "AI 生成 3D 中，首次生成需把约 4GB 权重加载进显存，约 1 分钟，请耐心等待...";
+            const withTexture = document.getElementById("gen3d-texture")?.checked !== false;
+            payload.append("withTexture", String(withTexture));
+            status.innerText = withTexture
+                ? "AI 生成中：先重建几何再生成贴图，首次加载模型约 1 分钟，之后每件还需几分钟..."
+                : "AI 生成 3D 中，首次生成需把权重加载进显存，约 1 分钟，请耐心等待...";
             const res = await fetch("/api/generate-3d", { method: "POST", body: payload });
             const json = await res.json().catch(() => null);
             if (!res.ok) {
@@ -1002,7 +1027,9 @@
             }
             status.innerText = "生成成功，正在载入...";
             await loadArtifacts(true, json?.artifact?.id);
-            status.innerText = "AI 3D 模型已生成并加入展馆";
+            status.innerText = json?.warning
+                ? `已生成（未上贴图）：${json.warning}`
+                : "AI 3D 模型已生成并加入展馆";
         } catch (e) {
             status.innerText = `生成失败：${e.message || e}`;
         } finally {

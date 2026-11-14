@@ -41,6 +41,8 @@ app = FastAPI(title="Lingnan-Exhibition 2D->3D")
 # 模型默认全部加载到 GPU 显然放不下 8GB，这里用"懒加载 + 单线程队列"串行推理，避免同时占显存
 _engine = None
 _engine_lock = threading.Lock()
+_paint_engine = None
+_paint_lock = threading.Lock()
 
 # 展馆模型存档目录（与 backend/server.js 的 modelsDir 一致）
 MODELS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models"))
@@ -56,6 +58,7 @@ class GenerateRequest(BaseModel):
 class GenerateResponse(BaseModel):
     modelFile: str
     bytes: int
+    warning: str | None = None
 
 
 def _load_engine():
@@ -87,6 +90,47 @@ def _load_engine():
     return _engine
 
 
+def _load_paint_engine():
+    """懒加载 Hunyuan3D-Paint 纹理管线（turbo 版，LCM 4 步）。
+
+    Paint 由「去光照模型 delight」+「多视角扩散模型 paint-turbo」两部分组成。
+    本机 8GB 显存放不下整条管线，因此用 enable_model_cpu_offload() 让各子模型
+    在 CPU/GPU 之间按需搬运；贴图分辨率默认 1024（可用 HY3D_TEXTURE_SIZE 调，
+    2048 更清晰但更慢也更吃显存）。
+
+    注意：Hunyuan3DPaintPipeline.from_pretrained 只接受 (model_path, subfolder)，
+    没有 variant 参数，所以这里直接构造 Hunyuan3DTexGenConfig 来指定分辨率。
+    """
+    global _paint_engine
+    if _paint_engine is not None:
+        return _paint_engine
+    with _paint_lock:
+        if _paint_engine is None:
+            # 先 import torch：custom_rasterizer_kernel 依赖 torch 带的 cudart64_12.dll
+            import torch
+            from hy3dgen.texgen.pipelines import (
+                Hunyuan3DPaintPipeline,
+                Hunyuan3DTexGenConfig,
+            )
+
+            subfolder = os.environ.get("HY3D_PAINT_SUBFOLDER", "hunyuan3d-paint-v2-0-turbo")
+            repo_dir = os.path.join(os.environ["HY3DGEN_MODELS"], "tencent", "Hunyuan3D-2")
+            size = int(os.environ.get("HY3D_TEXTURE_SIZE", "1024"))
+
+            config = Hunyuan3DTexGenConfig(
+                os.path.join(repo_dir, "hunyuan3d-delight-v2-0"),
+                os.path.join(repo_dir, subfolder),
+                subfolder,
+            )
+            config.render_size = size
+            config.texture_size = size
+
+            pipe = Hunyuan3DPaintPipeline(config)
+            pipe.enable_model_cpu_offload()
+            _paint_engine = pipe
+    return _paint_engine
+
+
 @app.get("/health")
 def health():
     return {
@@ -113,6 +157,9 @@ def generate(req: GenerateRequest):
 
     try:
         pipeline = _load_engine()
+        # 上一条请求做过纹理生成的话，几何管线还在 CPU 上，先搬回显卡
+        if getattr(pipeline, "device", None) is not None and str(pipeline.device) != "cuda":
+            pipeline.to("cuda")
         meshes = pipeline(
             image=image,
             num_inference_steps=req.num_inference_steps,
@@ -126,20 +173,18 @@ def generate(req: GenerateRequest):
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"形状重建失败: {exc}") from exc
 
-    # 可选：上纹理。受显存限制默认关闭；若开启且显存不足会在这里报错，不影响几何结果
+    # 可选：上纹理（Hunyuan3D-Paint）。8GB 显存放不下两条管线，先把几何管线挪到 CPU
+    warning = None
     if req.with_texture:
         try:
-            from hy3dgen.texgen import Hunyuan3DPaintPipeline
+            import torch
 
-            paint = Hunyuan3DPaintPipeline.from_pretrained(
-                "tencent/Hunyuan3D-2", variant="fp16"
-            )
-            mesh = paint(mesh, image=image)
+            pipeline.to("cpu")
+            torch.cuda.empty_cache()
+            mesh = _load_paint_engine()(mesh, image=image)
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(
-                status_code=500,
-                detail=f"纹理生成失败(8GB 显存通常不足，可关闭 with_texture): {exc}",
-            ) from exc
+            # 贴图失败不该把整件文物一起丢掉：返回白膜并带上原因
+            warning = f"贴图生成失败，已返回白膜：{exc}"
 
     os.makedirs(MODELS_DIR, exist_ok=True)
     with tempfile.NamedTemporaryFile(suffix=".glb", delete=False, dir=MODELS_DIR) as tmp:
@@ -150,7 +195,9 @@ def generate(req: GenerateRequest):
         size = os.path.getsize(glb_path)
         if size == 0:
             raise RuntimeError("导出为空文件")
-        return GenerateResponse(modelFile=os.path.basename(glb_path), bytes=size)
+        return GenerateResponse(
+            modelFile=os.path.basename(glb_path), bytes=size, warning=warning
+        )
     finally:
         # 空文件时清理
         if os.path.exists(glb_path) and os.path.getsize(glb_path) == 0:
