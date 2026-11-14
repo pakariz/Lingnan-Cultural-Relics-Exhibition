@@ -4,6 +4,7 @@ const net = require("net");
 
 let mainWindow = null;
 let serverPort = null;
+let backend = null;
 
 // 找一个空闲端口，避免与用户已开的 3000 端口冲突
 function getFreePort() {
@@ -21,7 +22,7 @@ function startBackend() {
   // 在 require 后端之前写入端口，server.js 会读取 process.env.PORT
   return getFreePort().then((port) => {
     process.env.PORT = String(port);
-    require(path.join(__dirname, "..", "backend", "server.js"));
+    backend = require(path.join(__dirname, "..", "backend", "server.js"));
     return port;
   });
 }
@@ -58,4 +59,11 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+// 关闭应用时一并结束 AI 推理服务，避免它继续驻留后台占用显存/端口
+app.on("will-quit", () => {
+  if (backend && typeof backend.stopAi3d === "function") {
+    backend.stopAi3d();
+  }
 });

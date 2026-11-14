@@ -965,7 +965,23 @@
     // 2D 图片 -> 3D 生成
     const gen3dBtn = document.getElementById("gen3d-btn");
     const gen3dFile = document.getElementById("gen3d-file");
-    gen3dBtn.addEventListener("click", () => gen3dFile.click());
+    // 点击即在后台拉起本机推理服务（无需再手动点 启动推理服务.bat），同时弹出选图框；
+    // 选图的这几秒正好用来等 uvicorn 起来。
+    gen3dBtn.addEventListener("click", () => {
+        const status = document.getElementById("model-status");
+        status.innerText = "正在启动 AI 推理服务...";
+        fetch("/api/ai3d/ensure", { method: "POST" })
+            .then((res) => res.json().catch(() => null))
+            .then((json) => {
+                if (json && json.success) {
+                    status.innerText = "AI 推理服务已就绪，请选择文物图片";
+                } else {
+                    status.innerText = `AI 推理服务启动失败：${(json && json.message) || "未知错误"}`;
+                }
+            })
+            .catch(() => {});
+        gen3dFile.click();
+    });
     gen3dFile.addEventListener("change", async () => {
         const file = gen3dFile.files && gen3dFile.files[0];
         gen3dFile.value = "";
@@ -978,7 +994,7 @@
             const payload = new FormData();
             payload.append("image", file);
             payload.append("name", file.name.replace(/\.(jpe?g|png|webp|bmp)$/i, ""));
-            status.innerText = "AI 生成 3D 中，首次运行需下载模型，请耐心等待...";
+            status.innerText = "AI 生成 3D 中，首次生成需把约 4GB 权重加载进显存，约 1 分钟，请耐心等待...";
             const res = await fetch("/api/generate-3d", { method: "POST", body: payload });
             const json = await res.json().catch(() => null);
             if (!res.ok) {

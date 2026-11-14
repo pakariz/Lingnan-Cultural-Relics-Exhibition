@@ -2,6 +2,7 @@ const express = require("express");
 const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
+const { spawn, spawnSync } = require("child_process");
 
 const app = express();
 const projectRoot = path.resolve(__dirname, "..");
@@ -60,6 +61,111 @@ const uploadImage = multer({
 
 // 本机 2D->3D 推理服务（ai3d/server.py）
 const AI3D_URL = process.env.AI3D_URL || "http://127.0.0.1:8765";
+const AI3D_DIR = path.join(projectRoot, "ai3d");
+const AI3D_SCRIPT = path.join(AI3D_DIR, "server.py");
+const AI3D_PYTHON = path.join(AI3D_DIR, "venv", "Scripts", "python.exe");
+const AI3D_LOG = path.join(AI3D_DIR, "ai3d-service.log");
+
+// 只记录“由本进程拉起”的子进程；用户自己开着的服务我们不去管，也不会去杀
+let ai3dChild = null;
+let ai3dStarting = null;
+
+async function probeAi3d(timeoutMs = 2000) {
+  try {
+    const res = await fetch(`${AI3D_URL}/health`, { signal: AbortSignal.timeout(timeoutMs) });
+    return res.ok;
+  } catch (_error) {
+    return false;
+  }
+}
+
+// 拉起 ai3d/server.py：windowsHide 保证不弹黑色终端，日志写入 ai3d/ai3d-service.log
+function spawnAi3d() {
+  if (ai3dChild && ai3dChild.exitCode === null) return;
+  if (!fs.existsSync(AI3D_PYTHON)) {
+    throw new Error(
+      `未找到 Python 虚拟环境：${AI3D_PYTHON}。请先按开发日志搭建 ai3d/venv 并安装依赖。`
+    );
+  }
+
+  const logFd = fs.openSync(AI3D_LOG, "a");
+  fs.writeSync(logFd, `\n===== ${new Date().toISOString()} 启动推理服务 =====\n`);
+
+  const child = spawn(AI3D_PYTHON, [AI3D_SCRIPT], {
+    cwd: AI3D_DIR,
+    windowsHide: true,
+    stdio: ["ignore", logFd, logFd],
+    env: {
+      ...process.env,
+      PYTHONIOENCODING: "utf-8",
+      PYTHONUTF8: "1",
+      // 让 Python 自己盯着父进程，父进程被强杀时也跟着退出，避免残留占显存
+      AI3D_PARENT_PID: String(process.pid),
+    },
+  });
+  ai3dChild = child;
+
+  child.on("error", (error) => {
+    fs.appendFileSync(AI3D_LOG, `[spawn error] ${error.message}\n`);
+    if (ai3dChild === child) ai3dChild = null;
+  });
+  child.on("exit", (code) => {
+    fs.appendFileSync(AI3D_LOG, `[exit] code=${code}\n`);
+    if (ai3dChild === child) ai3dChild = null;
+  });
+}
+
+// 结束由本进程拉起的推理服务（整个进程树，Windows 用 taskkill）
+function stopAi3d() {
+  const child = ai3dChild;
+  if (!child || child.exitCode !== null) {
+    ai3dChild = null;
+    return;
+  }
+  ai3dChild = null;
+  try {
+    if (process.platform === "win32") {
+      spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
+    } else {
+      child.kill("SIGTERM");
+    }
+  } catch (_error) {
+    // 退出阶段忽略失败，父进程消失后 Python 的看门狗也会自行退出
+  }
+}
+
+// 确保推理服务在跑：已在运行则直接返回，否则拉起并轮询 /health
+function ensureAi3d(timeoutMs = 120000) {
+  if (ai3dStarting) return ai3dStarting;
+
+  ai3dStarting = (async () => {
+    if (await probeAi3d()) return true;
+
+    spawnAi3d();
+
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      if (await probeAi3d()) return true;
+      if (!ai3dChild) {
+        throw new Error("AI 推理服务进程已退出，详情见 ai3d/ai3d-service.log");
+      }
+    }
+    throw new Error("AI 推理服务启动超时，详情见 ai3d/ai3d-service.log");
+  })().finally(() => {
+    ai3dStarting = null;
+  });
+
+  return ai3dStarting;
+}
+
+// 应用退出时带走推理服务
+["exit", "SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"].forEach((signal) => {
+  process.on(signal, () => {
+    stopAi3d();
+    if (signal !== "exit") process.exit(0);
+  });
+});
 
 function readArtifacts() {
   try {
@@ -370,18 +476,11 @@ app.post("/api/generate-3d", uploadImage.single("image"), async (req, res) => {
   const baseName = (req.body.name || "").trim() || (req.file?.originalname || "").replace(/\.(jpe?g|png|webp|bmp)$/i, "") || "AI生成文物";
 
   try {
-    let health;
+    // 推理服务未运行时自动拉起（隐藏窗口），无需用户手动点 启动推理服务.bat
     try {
-      health = await fetch(`${AI3D_URL}/health`, { signal: AbortSignal.timeout(3000) });
-    } catch (_e) {
-      res.status(503).json({
-        message:
-          "2D->3D 推理服务未启动。请在项目根目录运行 `ai3d\\启动推理服务.bat`（或手动 `python ai3d/server.py`），等待模型加载完成后再试。",
-      });
-      return;
-    }
-    if (!health.ok) {
-      res.status(503).json({ message: "2D->3D 推理服务暂不可用，请稍后重试。" });
+      await ensureAi3d();
+    } catch (error) {
+      res.status(503).json({ message: `无法启动 2D->3D 推理服务：${error.message}` });
       return;
     }
 
@@ -429,6 +528,23 @@ app.post("/api/generate-3d", uploadImage.single("image"), async (req, res) => {
   }
 });
 
+// 前端点“图片生成3D”时先预热推理服务：后台拉起，不阻塞用户选图
+app.post("/api/ai3d/ensure", async (_req, res) => {
+  try {
+    await ensureAi3d();
+    res.json({ success: true, running: true });
+  } catch (error) {
+    res.status(503).json({ success: false, message: error.message });
+  }
+});
+
+app.get("/api/ai3d/status", async (_req, res) => {
+  res.json({
+    running: await probeAi3d(),
+    managed: Boolean(ai3dChild && ai3dChild.exitCode === null),
+  });
+});
+
 app.use("/models", express.static(modelsDir));
 app.use(express.static(projectRoot));
 
@@ -451,4 +567,4 @@ const server = app.listen(port, () => {
 });
 
 // 供 Electron 桌面端复用：可直接加载本模块启动服务
-module.exports = { app, server, port };
+module.exports = { app, server, port, ensureAi3d, stopAi3d };

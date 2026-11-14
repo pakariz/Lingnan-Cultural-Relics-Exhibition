@@ -24,6 +24,7 @@ import base64
 import sys
 import tempfile
 import threading
+import time
 
 # hy3dgen 包来自本地克隆的 Hunyuan3D-2 源码（免 pip install -e）
 _HY3D_REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "Hunyuan3D-2"))
@@ -156,5 +157,46 @@ def generate(req: GenerateRequest):
             os.remove(glb_path)
 
 
+def _start_parent_watchdog():
+    """父进程消失时自行退出，避免关闭应用后推理服务仍驻留后台占显存/端口。
+
+    父进程号由 backend/server.js 通过环境变量 AI3D_PARENT_PID 传入；
+    手动运行本脚本时该变量不存在，看门狗不启用。
+    """
+    raw = os.environ.get("AI3D_PARENT_PID", "")
+    if not raw.isdigit():
+        return
+    ppid = int(raw)
+
+    def parent_alive():
+        if os.name == "nt":
+            import ctypes
+
+            SYNCHRONIZE = 0x00100000
+            WAIT_OBJECT_0 = 0
+            handle = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, ppid)
+            if not handle:
+                return False
+            try:
+                # 父进程退出后其句柄会进入已置信号状态
+                return ctypes.windll.kernel32.WaitForSingleObject(handle, 0) != WAIT_OBJECT_0
+            finally:
+                ctypes.windll.kernel32.CloseHandle(handle)
+        try:
+            os.kill(ppid, 0)
+            return True
+        except OSError:
+            return False
+
+    def loop():
+        while True:
+            time.sleep(3)
+            if not parent_alive():
+                os._exit(0)
+
+    threading.Thread(target=loop, daemon=True).start()
+
+
 if __name__ == "__main__":
+    _start_parent_watchdog()
     uvicorn.run(app, host="127.0.0.1", port=8765, log_level="info")
