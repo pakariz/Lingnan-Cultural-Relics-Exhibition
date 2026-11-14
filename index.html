@@ -572,7 +572,7 @@
                     <div class="form-grid">
                         <div class="form-field">
                             <label>世界背景颜色</label>
-                            <input id="form-bg-color" type="color" value="#545454">
+                            <input id="form-bg-color" type="color" value="#808080">
                         </div>
                         <div class="form-field">
                             <label>外部光源总强度</label>
@@ -640,8 +640,8 @@
     // --- 初始化场景 ---
     const container = document.getElementById('canvas-container');
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x000000);
-    scene.fog = new THREE.FogExp2(0x000000, 0.0023);
+    scene.background = new THREE.Color(0x808080);
+    scene.fog = new THREE.FogExp2(0x808080, 0.0023);
     
     const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
     camera.position.set(3, 2.2, 5);
@@ -730,14 +730,34 @@
     let artifacts = [];
     let selectedArtifactId = "";
     let currentModel = null;
+    // 模型加载令牌：快速切换展品时，只允许最后一次请求把模型放进场景
+    let displayToken = 0;
     
     const gltfLoader = new GLTFLoader();
     const objLoader = new OBJLoader();
     const mtlLoader = new MTLLoader();
     
+    function disposeObject3D(root) {
+        if (!root) return;
+        root.traverse((child) => {
+            if (!child.isMesh) return;
+            if (child.geometry) child.geometry.dispose();
+            const materials = Array.isArray(child.material) ? child.material : [child.material];
+            materials.forEach((mat) => {
+                if (!mat) return;
+                Object.keys(mat).forEach((key) => {
+                    const value = mat[key];
+                    if (value && value.isTexture) value.dispose();
+                });
+                mat.dispose();
+            });
+        });
+    }
+    
     function removeCurrentModel() {
         if (currentModel) {
             scene.remove(currentModel);
+            disposeObject3D(currentModel);
             currentModel = null;
         }
     }
@@ -800,7 +820,7 @@
             posX: toNumber(artifact?.posX, 0),
             posY: toNumber(artifact?.posY, -0.2),
             posZ: toNumber(artifact?.posZ, 0),
-            bgColor: toColor(artifact?.bgColor, "#545454"),
+            bgColor: toColor(artifact?.bgColor, "#808080"),
             envLightIntensity: Math.max(0, toNumber(artifact?.envLightIntensity, 1)),
             extraLightColor: toColor(artifact?.extraLightColor, "#ffd8b0"),
             extraLightIntensity: Math.max(0, toNumber(artifact?.extraLightIntensity, 0.25)),
@@ -812,9 +832,9 @@
 
     function applySceneEnvironment(settings) {
         const envScale = settings?.envLightIntensity ?? 1;
-        scene.background = new THREE.Color(settings?.bgColor || "#545454");
+        scene.background = new THREE.Color(settings?.bgColor || "#808080");
         if (scene.fog) {
-            scene.fog.color.set(settings?.bgColor || "#545454");
+            scene.fog.color.set(settings?.bgColor || "#808080");
         }
         ambientLight.intensity = 0.55 * envScale;
         mainLight.intensity = 0.85 * envScale;
@@ -834,15 +854,30 @@
             posY: -0.2,
             posZ: 0,
         };
-        const box = new THREE.Box3().setFromObject(modelGroup);
-        const size = box.getSize(new THREE.Vector3());
-        const maxDim = Math.max(size.x, size.y, size.z);
-        let scale = 1;
-        if (Number.isFinite(maxDim) && maxDim > 1.7) {
-            scale = 1.35 / maxDim;
+        // 基准缩放只按模型原始包围盒算一次，重复应用设置时不会越缩越小/越缩越大
+        if (!Number.isFinite(modelGroup.userData.baseScale)) {
+            const box = new THREE.Box3().setFromObject(modelGroup);
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            let scale = 1;
+            if (Number.isFinite(maxDim) && maxDim > 1.7) {
+                scale = 1.35 / maxDim;
+            }
+            modelGroup.userData.baseScale = scale;
         }
-        modelGroup.scale.setScalar(scale * safeSettings.modelScale);
+        modelGroup.scale.setScalar(modelGroup.userData.baseScale * safeSettings.modelScale);
         modelGroup.position.set(safeSettings.posX, safeSettings.posY, safeSettings.posZ);
+    }
+
+    // 保存后原地应用设置：不重新下载模型，也不重置右侧编辑表单
+    function applyArtifactToScene(artifact) {
+        if (!artifact) return;
+        const settings = getModelSettings(artifact);
+        applySceneEnvironment(settings);
+        if (currentModel) {
+            fitModelToView(currentModel, settings);
+            enhanceImportedModel(currentModel, settings.emissiveIntensity);
+        }
     }
 
     function updateRightPane(artifact) {
@@ -901,6 +936,7 @@
 
     // 展示文物
     async function displayArtifact(artifact) {
+        const token = ++displayToken;
         removeCurrentModel();
         const status = document.getElementById("model-status");
         status.innerText = "";
@@ -913,6 +949,11 @@
             if (modelUrl) {
                 status.innerText = "加载模型中...";
                 modelGroup = await loadModelFromUrl(modelUrl);
+                // 加载期间用户已经切到别的展品：丢弃这次结果，避免两个模型叠在一起
+                if (token !== displayToken) {
+                    disposeObject3D(modelGroup);
+                    return;
+                }
                 fitModelToView(modelGroup, modelSettings);
                 enhanceImportedModel(modelGroup, modelSettings.emissiveIntensity);
                 status.innerText = "模型已加载";
@@ -924,10 +965,15 @@
             }
         } catch (e) {
             console.error("模型加载失败", e);
+            if (token !== displayToken) return;
             modelGroup = createFallbackModel();
             status.innerText = "模型加载失败，展示占位模型";
         }
-        
+
+        if (token !== displayToken) {
+            disposeObject3D(modelGroup);
+            return;
+        }
         if (modelGroup) {
             modelGroup.traverse(child => { if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; } });
             scene.add(modelGroup);
@@ -1025,8 +1071,25 @@
             if (!res.ok) {
                 throw new Error((json && (json.message || json.detail)) || `生成失败(${res.status})`);
             }
-            status.innerText = "生成成功，正在载入...";
-            await loadArtifacts(true, json?.artifact?.id);
+            const created = json?.artifact || null;
+            if (created) {
+                const idx = artifacts.findIndex((a) => a.id === created.id);
+                if (idx >= 0) {
+                    artifacts[idx] = { ...artifacts[idx], ...created };
+                } else {
+                    artifacts.unshift(created);
+                }
+                selectedArtifactId = created.id;
+                renderArtifactList();
+                updateRightPane(created);
+                // 生成完成后回到浏览态，避免编辑器里残留旧展品的内容
+                editMode = false;
+                setEditMode(false);
+                fillFormFromArtifact(created);
+                await displayArtifact(created);
+            } else {
+                await loadArtifacts(true);
+            }
             status.innerText = json?.warning
                 ? `已生成（未上贴图）：${json.warning}`
                 : "AI 3D 模型已生成并加入展馆";
@@ -1065,8 +1128,11 @@
 
     document.getElementById("artifact-form").addEventListener("submit", async (e) => {
         e.preventDefault();
+        const saveBtn = document.getElementById("save-btn");
+        if (saveBtn.disabled) return;
         const status = document.getElementById("form-status");
         status.innerText = "保存中...";
+        saveBtn.disabled = true;
 
         const payload = new FormData();
         payload.append("name", document.getElementById("form-name").value.trim());
@@ -1081,7 +1147,7 @@
         payload.append("posX", document.getElementById("form-pos-x").value.trim() || "0");
         payload.append("posY", document.getElementById("form-pos-y").value.trim() || "-0.2");
         payload.append("posZ", document.getElementById("form-pos-z").value.trim() || "0");
-        payload.append("bgColor", document.getElementById("form-bg-color").value.trim() || "#545454");
+        payload.append("bgColor", document.getElementById("form-bg-color").value.trim() || "#808080");
         payload.append("envLightIntensity", document.getElementById("form-env-light-intensity").value.trim() || "1");
         payload.append("extraLightColor", document.getElementById("form-extra-light-color").value.trim() || "#ffd8b0");
         payload.append("extraLightIntensity", document.getElementById("form-extra-light-intensity").value.trim() || "0.25");
@@ -1091,6 +1157,7 @@
 
         const file = document.getElementById("form-model").files?.[0];
         if (file) payload.append("model", file);
+        const isNewArtifact = !selectedArtifactId;
 
         try {
             let res;
@@ -1104,10 +1171,30 @@
                 throw new Error(err.message || "保存失败");
             }
             const json = await res.json();
+            const saved = json?.artifact || null;
+            if (saved) {
+                selectedArtifactId = saved.id;
+                const idx = artifacts.findIndex((a) => a.id === saved.id);
+                if (idx >= 0) {
+                    artifacts[idx] = { ...artifacts[idx], ...saved };
+                } else {
+                    artifacts.unshift(saved);
+                }
+                renderArtifactList();
+                updateRightPane(saved);
+                document.getElementById("delete-btn").disabled = false;
+                if (file || isNewArtifact) {
+                    // 换了模型文件或新建展品时才需要真正加载模型
+                    await displayArtifact(saved);
+                } else {
+                    applyArtifactToScene(saved);
+                }
+            }
             status.innerText = "已保存。";
-            await loadArtifacts(true, json?.artifact?.id);
         } catch (err) {
             status.innerText = `保存失败：${err.message || err}`;
+        } finally {
+            saveBtn.disabled = false;
         }
     });
 
@@ -1135,6 +1222,8 @@
             selectedArtifactId = "";
             updateRightPane(null);
             fillFormFromArtifact(null);
+            // 让仍在加载中的旧模型失效，避免它稍后又被加进场景
+            displayToken += 1;
             removeCurrentModel();
             const fallback = createFallbackModel();
             scene.add(fallback);
