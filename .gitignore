@@ -1,13 +1,14 @@
 # 依赖
 node_modules/
 
-# 2D->3D AI 推理环境（虚拟环境/下载缓存/克隆源码/权重，不入库）
+# 2D->3D AI 推理环境（虚拟环境/下载缓存/权重，不入库）
 ai3d/venv/
 ai3d/torch-local/
-ai3d/Hunyuan3D-2/
 ai3d/weights/
 ai3d/cuda-home/
 ai3d/ai3d-service.log
+# Hunyuan3D-2 源码入库（含预编译扩展），但排除编译中间产物
+ai3d/Hunyuan3D-2/**/build/
 ai3d/**/__pycache__/
 ai3d/**/*.whl
 .venv/
