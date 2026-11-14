@@ -209,7 +209,7 @@ function normalizeHexColor(value, fallback) {
 
 function normalizeEnvironmentSettings(source = {}) {
   return {
-    bgColor: normalizeHexColor(source.bgColor, "#000000"),
+    bgColor: normalizeHexColor(source.bgColor, "#545454"),
     envLightIntensity: Math.max(0, toFiniteNumber(source.envLightIntensity, 1)),
     extraLightColor: normalizeHexColor(source.extraLightColor, "#ffd8b0"),
     extraLightIntensity: Math.max(0, toFiniteNumber(source.extraLightIntensity, 0.25)),

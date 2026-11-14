@@ -572,7 +572,7 @@
                     <div class="form-grid">
                         <div class="form-field">
                             <label>世界背景颜色</label>
-                            <input id="form-bg-color" type="color" value="#000000">
+                            <input id="form-bg-color" type="color" value="#545454">
                         </div>
                         <div class="form-field">
                             <label>外部光源总强度</label>
@@ -800,7 +800,7 @@
             posX: toNumber(artifact?.posX, 0),
             posY: toNumber(artifact?.posY, -0.2),
             posZ: toNumber(artifact?.posZ, 0),
-            bgColor: toColor(artifact?.bgColor, "#000000"),
+            bgColor: toColor(artifact?.bgColor, "#545454"),
             envLightIntensity: Math.max(0, toNumber(artifact?.envLightIntensity, 1)),
             extraLightColor: toColor(artifact?.extraLightColor, "#ffd8b0"),
             extraLightIntensity: Math.max(0, toNumber(artifact?.extraLightIntensity, 0.25)),
@@ -812,9 +812,9 @@
 
     function applySceneEnvironment(settings) {
         const envScale = settings?.envLightIntensity ?? 1;
-        scene.background = new THREE.Color(settings?.bgColor || "#000000");
+        scene.background = new THREE.Color(settings?.bgColor || "#545454");
         if (scene.fog) {
-            scene.fog.color.set(settings?.bgColor || "#000000");
+            scene.fog.color.set(settings?.bgColor || "#545454");
         }
         ambientLight.intensity = 0.55 * envScale;
         mainLight.intensity = 0.85 * envScale;
@@ -1081,7 +1081,7 @@
         payload.append("posX", document.getElementById("form-pos-x").value.trim() || "0");
         payload.append("posY", document.getElementById("form-pos-y").value.trim() || "-0.2");
         payload.append("posZ", document.getElementById("form-pos-z").value.trim() || "0");
-        payload.append("bgColor", document.getElementById("form-bg-color").value.trim() || "#000000");
+        payload.append("bgColor", document.getElementById("form-bg-color").value.trim() || "#545454");
         payload.append("envLightIntensity", document.getElementById("form-env-light-intensity").value.trim() || "1");
         payload.append("extraLightColor", document.getElementById("form-extra-light-color").value.trim() || "#ffd8b0");
         payload.append("extraLightIntensity", document.getElementById("form-extra-light-intensity").value.trim() || "0.25");
